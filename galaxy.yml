@@ -1,0 +1,22 @@
+namespace: maxbab
+name: rhsi
+version: 0.0.1
+
+description: Red Hat Interconnect Service collection for Hive infrastructure management
+readme: README.md
+license_file: 'LICENSE'
+homepage: http://example.com
+repository: http://example.com/repository
+documentation: http://docs.example.com
+issues: http://example.com/issue/tracker
+
+authors:
+  - maxbab (https://github.com/MaxBab)
+
+tags: [
+  'hive',
+  'openshift'
+]
+
+dependencies:
+  community.okd: '==3.0.1'

@@ -1,0 +1,87 @@
+---
+- name: Set info state
+  ansible.builtin.set_fact: # noqa: jinja[spacing]
+    info_state: "{%- if state == 'present' -%}
+                 Create
+                 {%- elif state == 'absent' -%}
+                 Destroy
+                 {%- endif -%}"
+
+- name: Cloud credentials - "{{ info_state }}"
+  community.okd.k8s:
+    kubeconfig: "{{ hive_kubeconfig }}"
+    definition: "{{ lookup('template', 'cloud-secret.yaml.j2') | from_yaml }}"
+    state: "{{ state }}"
+  loop: "{{ hive_pools }}"
+  no_log: true
+
+- name: Pull-secret - "{{ info_state }}"
+  community.okd.k8s:
+    kubeconfig: "{{ hive_kubeconfig }}"
+    definition: "{{ lookup('template', 'pull-secret.yaml.j2') | from_yaml }}"
+    state: "{{ state }}"
+  loop: "{{ hive_pools }}"
+
+- name: Install-config secret - "{{ info_state }}"
+  community.okd.k8s:
+    kubeconfig: "{{ hive_kubeconfig }}"
+    definition: "{{ lookup('template', 'install-config-secret.yaml.j2') | from_yaml }}"
+    state: "{{ state }}"
+  loop: "{{ hive_pools }}"
+
+- name: Cluster Image Set - "{{ info_state }}"
+  ansible.builtin.include_tasks:
+    file: cluster_image_set.yml
+  loop: "{{ hive_pools }}"
+
+- name: Cluster Pool - "{{ info_state }}"
+  community.okd.k8s:
+    kubeconfig: "{{ hive_kubeconfig }}"
+    definition: "{{ lookup('template', 'cluster-pool.yaml.j2') | from_yaml }}"
+    state: "{{ state }}"
+  loop: "{{ hive_pools }}"
+
+- name: Wait for cluster pool deletion to complete
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ hive_kubeconfig }}"
+    api_version: hive.openshift.io/v1
+    kind: ClusterPool
+    namespace: "{{ hive_namespace }}"
+    name: "{{ item.name }}"
+  loop: "{{ hive_pools }}"
+  register: cl_pool_clean
+  until: cl_pool_clean.resources | length == 0
+  retries: 200
+  delay: 25
+  when: state == "absent"
+
+- name: Wait for cluster pool creation to complete
+  when: state == "present"
+  block:
+    - name: Wait for cluster pool dependencies verification
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ hive_kubeconfig }}"
+        api_version: hive.openshift.io/v1
+        kind: ClusterPool
+        namespace: "{{ hive_namespace }}"
+        wait: true
+        wait_timeout: 3600
+        wait_condition:
+          type: MissingDependencies
+          status: false
+      loop: "{{ hive_pools }}"
+
+    - name: Wait for cluster pool ready and size status
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ hive_kubeconfig }}"
+        api_version: hive.openshift.io/v1
+        kind: ClusterPool
+        namespace: "{{ hive_namespace }}"
+        name: "{{ item.name }}"
+      loop: "{{ hive_pools }}"
+      register: cl_pool_ready
+      until:
+        - cl_pool_ready.resources[0].status.ready == (item.pool_config.running_count | default(1))
+        - cl_pool_ready.resources[0].status.size == (item.pool_config.size | default(1))
+      retries: 200
+      delay: 25

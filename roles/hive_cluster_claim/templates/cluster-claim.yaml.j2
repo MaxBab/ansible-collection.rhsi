@@ -1,0 +1,10 @@
+apiVersion: hive.openshift.io/v1
+kind: ClusterClaim
+metadata:
+  name: {{ item.name }}
+  namespace: {{ hive_namespace }}
+spec:
+  clusterPoolName: {{ item.pool }}
+{% if item.lifetime is defined %}
+  lifetime: {{ item.lifetime }}
+{% endif %}

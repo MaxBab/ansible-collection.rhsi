@@ -1,0 +1,34 @@
+---
+# curl -s -X GET https://quay.io/api/v1/repository/openshift-release-dev/ocp-release/tag/?filter_tag_name=like:4.9 \
+# | jq -S '.tags[] | {name: .name} | select(.name | endswith("x86_64"))' | jq -r '.name'
+- name: Fetch openshift cluster image if not provided manually
+  ansible.builtin.uri:
+    url: "{{ ocp_image_query_url }}/?filter_tag_name=like:{{ item.openshift_version }}"
+    method: "GET"
+    status_code: 200
+  register: img
+  when: item.openshift_image is not defined
+
+- name: Select latest openshift cluster image according to provided version
+  ansible.builtin.set_fact:
+    cluster_ver: "{{ img.json.tags
+      | selectattr('name', 'match', item.openshift_version + '.*' + 'multi' | string)
+      | map(attribute='name') | first }}"
+  when: item.openshift_image is not defined
+
+- name: Set openshift cluster version url string
+  ansible.builtin.set_fact:
+    openshift_image: "{{ ocp_image_base_url }}:{{ cluster_ver }}"
+    openshift_image_set_ref_name: "{{ cluster_ver | replace('_', '-') }}"
+  when: item.openshift_image is not defined
+
+- name: Set openshift cluster version image set ref name
+  ansible.builtin.set_fact:
+    openshift_image_set_ref_name: "{{ item.openshift_image.split('.')[1] }}"
+  when: item.openshift_image is defined
+
+- name: Cluster Image Set - "{{ info_state }}"
+  community.okd.k8s:
+    kubeconfig: "{{ hive_kubeconfig }}"
+    definition: "{{ lookup('template', 'cluster-image-set.yaml.j2') | from_yaml }}"
+    state: "{{ state }}"

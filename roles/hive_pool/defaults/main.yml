@@ -1,0 +1,13 @@
+# Two possible options: 'present' or 'absent'
+state: present
+
+hive_kubeconfig:
+hive_namespace:
+
+pull_secret:
+ssh_key:
+ssh_pub_key:
+
+# hive_pools: []
+
+# hive_pools_credentials: []

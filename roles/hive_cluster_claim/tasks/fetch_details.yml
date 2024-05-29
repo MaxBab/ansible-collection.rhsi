@@ -1,0 +1,86 @@
+---
+- name: Create OCP assets directory for cluster "{{ item.item.name }}"
+  ansible.builtin.file:
+    path: "{{ working_path }}/{{ item.item.name }}"
+    mode: '0755'
+    state: directory
+
+- name: Fetch kubeconfig file of the cluster
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ hive_kubeconfig }}"
+    api_version: v1
+    kind: Secret
+    namespace: "{{ item.resources[0].spec.namespace }}"
+  register: cl_secret
+
+- name: Save the kubeconfig file in the cluster directory
+  ansible.builtin.copy:
+    content: "{{ secret.data.kubeconfig | b64decode }}"
+    dest: "{{ working_path }}/{{ item.item.name }}/kubeconfig"
+    mode: '0644'
+  loop: "{{ cl_secret.resources }}"
+  loop_control:
+    loop_var: secret
+  when: '"admin-kubeconfig" in secret.metadata.name'
+
+- name: Fetch Console and API url of the cluster
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ hive_kubeconfig }}"
+    api_version: hive.openshift.io/v1
+    kind: ClusterDeployment
+    namespace: "{{ item.resources[0].spec.namespace }}"
+    name: "{{ item.resources[0].spec.namespace }}"
+  register: cl_deployment
+
+- name: Define Console and API url of the cluster
+  ansible.builtin.set_fact:
+    cl_console: "{{ cl_url.status.webConsoleURL }}"
+    cl_api: "{{ cl_url.status.apiURL }}"
+  loop: "{{ cl_deployment.resources }}"
+  loop_control:
+    loop_var: cl_url
+
+- name: Define cluster admin and password
+  ansible.builtin.set_fact:
+    cl_user: "{{ secret_creds.data.username | b64decode }}"
+    cl_pass: "{{ secret_creds.data.password | b64decode }}"
+  loop: "{{ cl_secret.resources }}"
+  loop_control:
+    loop_var: secret_creds
+  when: '"admin-password" in secret_creds.metadata.name'
+
+- name: Save the cluster credentials file in the cluster directory
+  ansible.builtin.copy:
+    content: |
+      console: {{ cl_console }}
+      api: {{ cl_api }}
+      username: {{ cl_user }}
+      password: {{ cl_pass }}
+    dest: "{{ working_path }}/{{ item.item.name }}/cluster-credentials"
+    mode: '0644'
+  loop: "{{ cl_secret.resources }}"
+  loop_control:
+    loop_var: secret
+  when: '"admin-kubeconfig" in secret.metadata.name'
+
+- name: Write cluster details into state file
+  ansible.builtin.blockinfile:
+    path: "{{ cl_details_file_path }}"
+    block: |
+      {{ item.item.name }}:
+        console: {{ cl_console }}
+        api: {{ cl_api }}
+        username: {{ cl_user }}
+        password: {{ cl_pass }}
+    marker: "#{mark} {{ item.item.name }} details"
+    mode: '0644'
+    create: true
+    state: present
+
+- name: Add cluster details to the state message
+  vars:
+    msg: |
+      Deployment of {{ item.item.name }} cluster succeeded.
+      Cluster connection details could be found here: {{ working_path }}/{{ item.item.name }}/
+  ansible.builtin.set_fact:
+    cl_state: "{{ cl_state | default([]) + msg.split('\n') }}"

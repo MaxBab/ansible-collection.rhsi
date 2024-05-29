@@ -1,0 +1,7 @@
+# Two possible options: 'present' or 'absent'
+state: present
+
+hive_kubeconfig:
+hive_namespace:
+
+hive_cluster_claims: []

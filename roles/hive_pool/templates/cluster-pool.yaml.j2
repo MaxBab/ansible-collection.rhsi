@@ -1,0 +1,29 @@
+{% set creds = hive_pools_credentials | selectattr('name', 'equalto', item.credentials) | first %}
+apiVersion: hive.openshift.io/v1
+kind: ClusterPool
+metadata:
+  name: {{ item.name }}
+  namespace: {{ hive_namespace }}
+  labels:
+    vendor: OpenShift
+    region: {{ item.region }}
+{% if item.platform == "aws" %}
+    cloud: 'AWS'
+{% elif item.platform == "gcp" %}
+    cloud: 'GCP'
+{% endif %}
+spec:
+  size: {{ item.pool_config.size | default(1) }}
+  runningCount: {{ item.pool_config.running_count | default(1) }}
+  baseDomain: {{ item.base_domain }}
+  installConfigSecretTemplateRef:
+    name: {{ item.name }}-install-config
+  imageSetRef:
+    name: {{ hive_namespace }}-{{ openshift_image_set_ref_name }}
+  pullSecretRef:
+    name: {{ item.name }}-pull-secret
+  platform:
+    {{ item.platform }}:
+      credentialsSecretRef:
+        name: {{ creds.name }}
+      region: {{ item.region }}

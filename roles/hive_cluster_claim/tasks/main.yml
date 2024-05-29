@@ -1,0 +1,112 @@
+---
+- name: Set ocp working directories path
+  ansible.builtin.set_fact:
+    working_path: "{{ lookup('env', 'PWD') }}/{{ main_logs_dir }}/{{ clusters_dir }}"
+    cl_details_file_path: "{{ lookup('env', 'PWD') }}/{{ main_logs_dir }}/{{ clusters_details_file }}"
+
+- name: Claim cluster from defined pool
+  community.okd.k8s:
+    kubeconfig: "{{ hive_kubeconfig }}"
+    definition: "{{ lookup('template', 'cluster-claim.yaml.j2') | from_yaml }}"
+    state: "{{ state }}"
+  loop: "{{ hive_cluster_claims }}"
+
+- name: Wait for cluster to be claimed and running
+  when: state == "present"
+  block:
+    - name: Wait for cluster to be claimed
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ hive_kubeconfig }}"
+        api_version: hive.openshift.io/v1
+        kind: ClusterClaim
+        namespace: "{{ hive_namespace }}"
+        wait: true
+        wait_timeout: 600
+        wait_condition:
+          type: Pending
+          status: false
+          reason: ClusterClaimed
+      loop: "{{ hive_cluster_claims }}"
+
+    - name: Wait for cluster to be running
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ hive_kubeconfig }}"
+        api_version: hive.openshift.io/v1
+        kind: ClusterClaim
+        namespace: "{{ hive_namespace }}"
+        wait: true
+        wait_timeout: 600
+        wait_condition:
+          type: ClusterRunning
+          status: true
+          reason: Running
+      loop: "{{ hive_cluster_claims }}"
+
+- name: Cluster claim removal
+  when: state == "absent"
+  block:
+    - name: Wait for cluster claim and cluster to be removed
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ hive_kubeconfig }}"
+        api_version: hive.openshift.io/v1
+        kind: ClusterClaim
+        namespace: "{{ hive_namespace }}"
+        name: "{{ item.name }}"
+      loop: "{{ hive_cluster_claims }}"
+      register: cl_unclaim
+      until: cl_unclaim.resources | length == 0
+      retries: 50
+      delay: 15
+
+    - name: Remove cluster working directory
+      ansible.builtin.file:
+        path: "{{ working_path }}"
+        state: absent
+
+    - name: Remove clusters details from the state file
+      ansible.builtin.blockinfile:
+        path: "{{ cl_details_file_path }}"
+        block: ""
+        marker: "#{mark} {{ item.name }} details"
+        state: absent
+      loop: "{{ hive_cluster_claims }}"
+
+    - name: Check the file "{{ clusters_details_file }}"
+      ansible.builtin.stat:
+        path: "{{ cl_details_file_path }}"
+      register: cl_file_state
+
+    - name: Delete the file if empty "{{ clusters_details_file }}"
+      ansible.builtin.file:
+        path: "{{ cl_details_file_path }}"
+        state: absent
+      when:
+        - cl_file_state.stat.exists
+        - cl_file_state.stat.size == 0
+
+- name: Gather OCP clusters details
+  when: state == "present"
+  block:
+    - name: Create OCP working directory
+      ansible.builtin.file:
+        path: "{{ working_path }}"
+        state: directory
+        mode: '0755'
+
+    - name: Gather clusters claims namespaces
+      kubernetes.core.k8s_info:
+        kubeconfig: "{{ hive_kubeconfig }}"
+        api_version: hive.openshift.io/v1
+        kind: ClusterClaim
+        namespace: "{{ hive_namespace }}"
+      loop: "{{ hive_cluster_claims }}"
+      register: cluster_claim_namespaces
+
+    - name: Fetch OCP cluster details
+      ansible.builtin.include_tasks:
+        file: fetch_details.yml
+      loop: "{{ cluster_claim_namespaces.results }}"
+
+    - name: Print clusters details
+      ansible.builtin.debug:
+        msg: "{{ cl_state }}"
